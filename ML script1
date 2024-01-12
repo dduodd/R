@@ -1,1 +1,61 @@
+library(tidymodels)
+library(vip)
+library(rsample)
+#import fishdf_joined
+
+data = fishdf_joined[,c(4:18)]
+
+split = initial_split(data, strata = Total_Fish_g_m2)
+train = training(split)
+test = testing (split)
+train_cv = vfold_cv(train, v = 10, repeats = 2)
+
+recept = recipe(Total_Fish_g_m2 ~., data = train)
+
+
+
+#need to fine-tune and 
+--------------------------------------------------------------------------------
+'''random forest'''
+
+#may or may not need --- rf <- rand_forest(mode = "regression", trees = 1000) %>% fit(Total_Fish_g_m2 ~., data = data)
+rf <- rand_forest(mode = "regression", trees = 1000) %>% set_engine('ranger', importance = 'permutation')
+#impurity - 12000 range
+#impurity_corrected - 6000 range
+#permutation - 200 range
+
+#rf_recept = recipe(Total_Fish_g_m2 ~., data = train)
+rf_workflow = workflow() %>% add_model(rf) %>% add_recipe(recept)
+
+rf_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Random Forest")  #can choose between data, train, or fishdf
+
+rf_fit = rf_workflow %>% fit(train)
+rf_metrics = rf_fit %>% collect_metrics()
+
+--------------------------------------------------------------------------------
+'''linear regression'''
+
+lin = linear_reg() %>% set_engine('lm')
+
+#lin_recept = recipe(Total_Fish_g_m2~., data = train)
+lin_workflow = workflow() %>% add_model(lin) %>% add_recipe(recept)
+
+lin_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Linear Regression")
+
+--------------------------------------------------------------------------------
+'''lasso'''
+
+lass = linear_reg(penalty = 1)
+
+lass_workflow = workflow() %>% add_model(lass) %>% add_recipe(recept)
+
+lass_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Lasso")
+
+--------------------------------------------------------------------------------
+'''ridge'''
+
+ridge = linear_reg(penalty = 10, mixture = 1) %>% set_engine("glmnet")
+ridge_workflow = workflow() %>% add_model(ridge) %>% add_recipe(recept)
+ridge_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Ridge")
+
 
