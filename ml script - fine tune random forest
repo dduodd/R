@@ -1,0 +1,83 @@
+library(tidymodels)
+library(vip)
+library(doParallel)
+library(yardstick)
+
+data <- fishdf_joined[, c(4:18)]
+split <- initial_split(data, strata = Total_Fish_g_m2)
+train <- training(split)
+test <- testing(split)
+train_cv <- vfold_cv(train, v = 10, repeats = 2)
+
+
+------------------------------------------------------------------------------------------------------------
+'''
+v1 - results:
+
+  .metric .estimator  mean     n    std_err .config             
+  <chr>   <chr>      <dbl>   <int>   <dbl>  <chr>               
+1 rmse    standard    39.6    20    2.46    Preprocessor1_Model1
+'''
+
+rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
+
+rf_model <- rand_forest(mode = "regression", trees = 1000) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
+
+rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
+
+rf_fit <- rf_workflow %>% fit_resamples(resamples = train_cv)
+
+
+print(rf_fit %>% collect_metrics() %>% filter(.metric == "rmse"))
+
+rf_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Random Forest")
+
+------------------------------------------------------------------------------------------------------------
+'''
+v2
+'''
+#define model,   
+rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
+rf_model <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
+rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
+
+
+#define and run parallel processing - makes things faster
+doParallel::registerDoParallel()
+doParallel::stopImplicitCluster() #RUN THIS CODE TO STOP PARALLEL PROCESSING
+#create multi-model to find best tuning
+multi_model = tune_grid(rf_workflow, resamples = train_cv, grid = 80)
+
+#tuning
+rf_tune = grid_regular(mtry(range = ), min_n(range = ), levels = )
+
+
+
+#visualization
+
+multi_model %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse", min_n < 5) %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "RMSE")
+
+multi_model %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "RMSE")
+
