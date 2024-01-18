@@ -32,7 +32,6 @@ rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
 
 rf_fit <- rf_workflow %>% fit_resamples(resamples = train_cv)
 
-
 print(rf_fit %>% collect_metrics() %>% filter(.metric == "rmse"))
 
 rf_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Random Forest")
@@ -46,9 +45,6 @@ rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
 rf_model <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
 rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
 
-
-
-
 #define and run parallel processing - makes things faster
 doParallel::registerDoParallel()
 doParallel::stopImplicitCluster() #RUN THIS CODE TO STOP PARALLEL PROCESSING
@@ -61,17 +57,10 @@ rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune) #tune th
 best_tune = select_best(rf_tune2, "rmse")
 final_rf_model = finalize_model(rf_model, best_tune)
 
-
-
-
 #NOT FINISHED YET - 2nd rf model that needs more tuning to lower rmse value
 rf_model_S <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation", min.node.size = tune())
 rf_tune = grid_regular(mtry(range = c(2, 15)), min_n(range = c(5, 20)), min.node.size(range = c(1, 10)), levels = 10)
 rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune)
-
-
-
-
 
 
 
