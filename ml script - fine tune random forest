@@ -7,8 +7,13 @@ data <- fishdf_joined[, c(4:18)]
 split <- initial_split(data, strata = Total_Fish_g_m2)
 train <- training(split)
 test <- testing(split)
-train_cv <- vfold_cv(train, v = 10, repeats = 2)
 
+train_prep = prep(rf_recipe, train)
+train_juice = juice(train_prep)
+  
+
+set.seed(123)
+train_cv <- vfold_cv(train, v = 10, repeats = 2)
 
 ------------------------------------------------------------------------------------------------------------
 '''
@@ -36,10 +41,12 @@ rf_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) 
 '''
 v2
 '''
-#define model,   
+#define model   
 rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
 rf_model <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
 rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
+
+
 
 
 #define and run parallel processing - makes things faster
@@ -49,28 +56,30 @@ doParallel::stopImplicitCluster() #RUN THIS CODE TO STOP PARALLEL PROCESSING
 multi_model = tune_grid(rf_workflow, resamples = train_cv, grid = 80)
 
 #tuning
-rf_tune = grid_regular(mtry(range = ), min_n(range = ), levels = )
+rf_tune = grid_regular(mtry(range = c(2,8)), min_n(range = c(5,11)), levels = 10) #define range for min_n and mtry
+rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune) #tune the rf_tune
+best_tune = select_best(rf_tune2, "rmse")
+final_rf_model = finalize_model(rf_model, best_tune)
+
+
+
+
+#NOT FINISHED YET - 2nd rf model that needs more tuning to lower rmse value
+rf_model_S <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation", min.node.size = tune())
+rf_tune = grid_regular(mtry(range = c(2, 15)), min_n(range = c(5, 20)), min.node.size(range = c(1, 10)), levels = 10)
+rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune)
+
+
+
+
 
 
 
 #visualization
-
-multi_model %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse", min_n < 5) %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter"
-  ) %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~parameter, scales = "free_x") +
-  labs(x = NULL, y = "RMSE")
-
 multi_model %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
+#  filter(.metric == "rmse", min_n < 5) %>%
   select(mean, min_n, mtry) %>%
   pivot_longer(min_n:mtry,
                values_to = "value",
@@ -78,6 +87,22 @@ multi_model %>%
   ) %>%
   ggplot(aes(value, mean, color = parameter)) +
   geom_point(show.legend = FALSE) +
+  geom_smooth(method = "lm", se = FALSE) +
   facet_wrap(~parameter, scales = "free_x") +
   labs(x = NULL, y = "RMSE")
 
+
+rf_tune2 %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  ggplot(aes(x = mtry, y = mean, color = as.factor(min_n))) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point(alpha = 0.5, size = 3) +
+  labs(x = "mtry", y = "RMSE")
+
+
+final_rf_model %>%
+  set_engine("ranger", importance = "permutation") %>%
+  fit(Total_Fish_g_m2 ~ .,
+      data = train_juice) %>%
+  vip(geom = "point")
