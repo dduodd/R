@@ -33,10 +33,12 @@ rf_workflow = workflow() %>% add_model(rf_model) %>% add_recipe(rf_recipe)
 
 sqrt(ncol(train))
 
+-----------------------------------------------------------------------------------------------------------------
+#tuning and prediction
+
 #rf_grid = grid_latin_hypercube(min_n(), mtry(range = c(2,8)), trees(), size = 100)
 rf_grid = grid_latin_hypercube(min_n(range = c(5,15)), mtry(range = c(2,12)), trees(range = c(200,700)), size = 100)
 plot(rf_grid)
-
 
 doParallel::registerDoParallel()
 set.seed(123)
@@ -44,9 +46,6 @@ rf_tune = rf_workflow %>% tune_grid(resamples = train_cv, grid = rf_grid, metric
 
 show_best(rf_tune, metric = 'rmse')
 autoplot(rf_tune)
-
------------------------------------------------------------------------------------------------------------------
-#tuning and prediction
 
 tuned_model = rf_workflow %>% finalize_workflow(show_best(x = rf_tune, metric = 'rmse', n = 1))
 final_rf = tuned_model %>% last_fit(split, metrics = metric_set(rmse, mae, rsq))
