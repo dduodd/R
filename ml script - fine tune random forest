@@ -1,97 +1,75 @@
 library(tidymodels)
 library(vip)
 library(doParallel)
-library(yardstick)
+library(sparklyr)
+library(ggplot2)
 
-data <- fishdf_joined[, c(4:18)]
-split <- initial_split(data, strata = Total_Fish_g_m2)
-train <- training(split)
-test <- testing(split)
+-----------------------------------------------------------------------------------------------------------------
+#data
 
-train_prep = prep(rf_recipe, train)
-train_juice = juice(train_prep)
-  
+data = fishdf_joined2[, c(4:18)]
+data[data == 0] = 0.000000001
+
 
 set.seed(123)
-train_cv <- vfold_cv(train, v = 10, repeats = 2)
+split = initial_split(data, strata = Total_Fish_g_m2, prop = 0.8)
+train = training(split)
+test = testing(split)
+set.seed(123)
+train_cv = vfold_cv(train, strata = Total_Fish_g_m2, v = 3)
 
-------------------------------------------------------------------------------------------------------------
-'''
-v1 - results:
+-----------------------------------------------------------------------------------------------------------------
+#model and preprocess
 
-  .metric .estimator  mean     n    std_err .config             
-  <chr>   <chr>      <dbl>   <int>   <dbl>  <chr>               
-1 rmse    standard    39.6    20    2.46    Preprocessor1_Model1
-'''
+rf_recipe = recipe(Total_Fish_g_m2~., data = train) %>%
+  step_log(all_outcomes()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_dummy(all_nominal_predictors())
 
-rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
+rf_model = rand_forest(mtry = tune(), min_n = tune(), trees = tune()) %>% 
+  set_engine('ranger', importance = 'impurity') %>% set_mode('regression')
 
-rf_model <- rand_forest(mode = "regression", trees = 1000) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
+rf_workflow = workflow() %>% add_model(rf_model) %>% add_recipe(rf_recipe)
 
-rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
+sqrt(ncol(train))
 
-rf_fit <- rf_workflow %>% fit_resamples(resamples = train_cv)
+#rf_grid = grid_latin_hypercube(min_n(), mtry(range = c(2,8)), trees(), size = 100)
+rf_grid = grid_latin_hypercube(min_n(range = c(5,15)), mtry(range = c(2,12)), trees(range = c(200,700)), size = 100)
+plot(rf_grid)
 
-print(rf_fit %>% collect_metrics() %>% filter(.metric == "rmse"))
 
-rf_workflow %>% fit(train) %>% extract_fit_parsnip() %>% vip(num_features = 14) + ggtitle("Random Forest")
-
-------------------------------------------------------------------------------------------------------------
-'''
-v2
-'''
-#define model   
-rf_recipe <- recipe(Total_Fish_g_m2 ~ ., data = train)
-rf_model <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation")
-rf_workflow <- workflow() %>% add_recipe(rf_recipe) %>% add_model(rf_model)
-
-#define and run parallel processing - makes things faster
 doParallel::registerDoParallel()
-doParallel::stopImplicitCluster() #RUN THIS CODE TO STOP PARALLEL PROCESSING
-#create multi-model to find best tuning
-multi_model = tune_grid(rf_workflow, resamples = train_cv, grid = 80)
+set.seed(123)
+rf_tune = rf_workflow %>% tune_grid(resamples = train_cv, grid = rf_grid, metrics = metric_set(rmse, mae, rsq))
 
-#tuning
-rf_tune = grid_regular(mtry(range = c(2,8)), min_n(range = c(5,11)), levels = 10) #define range for min_n and mtry
-rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune) #tune the rf_tune
-best_tune = select_best(rf_tune2, "rmse")
-final_rf_model = finalize_model(rf_model, best_tune)
+show_best(rf_tune, metric = 'rmse')
+autoplot(rf_tune)
 
-#NOT FINISHED YET - 2nd rf model that needs more tuning to lower rmse value
-rf_model_S <- rand_forest(mode = "regression", trees = 1000, mtry = tune(), min_n = tune()) %>% set_mode("regression") %>% set_engine("ranger", importance = "permutation", min.node.size = tune())
-rf_tune = grid_regular(mtry(range = c(2, 15)), min_n(range = c(5, 20)), min.node.size(range = c(1, 10)), levels = 10)
-rf_tune2 = tune_grid(rf_workflow, resamples = train_cv, grid = rf_tune)
+-----------------------------------------------------------------------------------------------------------------
+#tuning and prediction
+
+tuned_model = rf_workflow %>% finalize_workflow(show_best(x = rf_tune, metric = 'rmse', n = 1))
+final_rf = tuned_model %>% last_fit(split, metrics = metric_set(rmse, mae, rsq))
+
+final_model <- final_rf$.workflow[[1]]$fit$fit  
+test_processed <- rf_recipe %>% prep(data = test) %>% bake(new_data = test)
+predictions <- predict(final_model, new_data = test_processed)
+print(predictions)
+-----------------------------------------------------------------------------------------------------------------
+#add feature importance section
+-----------------------------------------------------------------------------------------------------------------
+#visualization 
+
+ggplot(rf_tune %>% collect_metrics(), aes(x = mtry, y = mean, color = .metric)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  facet_wrap(~.metric, scales = "free_y") +
+  labs(x = "mtry", y = "Value") +
+  theme_minimal()
 
 
-
-#visualization
-multi_model %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-#  filter(.metric == "rmse", min_n < 5) %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter"
-  ) %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
+ggplot(data = predictions, aes(x = .pred, y = test_processed$Total_Fish_g_m2)) +
+  geom_point() +
   geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~parameter, scales = "free_x") +
-  labs(x = NULL, y = "RMSE")
-
-
-rf_tune2 %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  ggplot(aes(x = mtry, y = mean, color = as.factor(min_n))) +
-  geom_line(alpha = 0.5, size = 1.5) +
-  geom_point(alpha = 0.5, size = 3) +
-  labs(x = "mtry", y = "RMSE")
-
-
-final_rf_model %>%
-  set_engine("ranger", importance = "permutation") %>%
-  fit(Total_Fish_g_m2 ~ .,
-      data = train_juice) %>%
-  vip(geom = "point")
+  labs(title = "Observed vs Predicted",
+       x = "Predicted Values",
+       y = "Observed Values")
