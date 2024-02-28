@@ -1,0 +1,122 @@
+#https://optimumsportsperformance.com/blog/confidence-intervals-for-random-forest-regression-using-tidymodels-sort-of/
+library(tidymodels)
+library(tidyverse)
+library(randomForest)
+library(ggplot2)
+library(caret)
+library(vip)
+
+#data
+df = fishdf_joined2 %>% select(c(4:18))
+names(df)[names(df) == 'Urchin_Density_ m2'] = 'Urchin_Density_m2'
+df[df == 0] = 0.000000001
+'''
+#train test
+split = initial_split(df, strata = Total_Fish_g_m2, prop = 0.85)
+df_train = training(split)
+df_test = testing(split)
+'''
+#cross validation
+set.seed(123)
+df_cv = vfold_cv(df, v = 5)
+
+'-----------------------------'
+
+#rf spec and grid
+rf_spec = rand_forest(mtry = tune(), trees = tune()) %>% set_engine("randomForest") %>% set_mode("regression")
+rf_tune_grid = grid_regular(mtry(range = c(1, 7)), trees(range = c(500, 800)), levels = 5)
+
+#rf recipe and wf
+rf_rec = recipe(Total_Fish_g_m2 ~., data = df)    '''### [should use df_train]'''
+rf_workflow = workflow() %>% add_recipe(rf_rec) %>% add_model(rf_spec)
+
+#control function to save prediction
+ctrl = control_resamples(save_pred = TRUE)
+
+#rf model
+rf_tune = tune_grid(rf_workflow, resamples = df_cv, grid = rf_tune_grid, control = ctrl)    '''### [no problems here]'''
+
+#model performance
+collect_metrics(rf_tune)  #collect metric from rf_tune
+select_best(rf_tune, metric = 'rmse')                                          #select best model
+collect_metrics(rf_tune) %>% filter(mtry == 5, trees == 500)  #see metric from best model -- change value if needed
+
+#refit model
+rf_refit = randomForest(Total_Fish_g_m2 ~., data = df, mtry = 5, ntree = 500)     '''### [should use df_test]'''
+
+#predictions
+
+predict_rf = predict(rf_refit, df, predict.all = TRUE)
+'-----------------------------'
+#stats
+mean(predict_rf$individual[1, ])  #mean
+sd(predict_rf$individual[1, ])    #sd
+#create ci
+t_crit = qt(p = 0.975, df = 500-1)  # p = [p_value], df = [trees]-1
+mean(predict_rf$individual[1, ]) + t_crit * sd(predict_rf$individual[1, ])  #upper ci
+mean(predict_rf$individual[1, ]) - t_crit * sd(predict_rf$individual[1, ])  #lower ci
+
+'-----------------------------'
+#predict w/ ci for all observation
+
+df_copy = df   '''### [no problems here]'''  #copy of df
+df_copy$pred_value = predict(rf_refit, df_copy)  #predict and store predicted value in pred_value in df_copy
+#add ci
+#individual records
+lower_row = rep(NA, nrow(df_copy))
+upper_row = rep(NA, nrow(df_copy))
+#columns
+lower_col <- numeric(length = ncol(predict_rf$individual))
+upper_col <- numeric(length = ncol(predict_rf$individual))
+
+#loop to retreve ci
+#individual records
+for(i in 1:nrow(df_copy)){
+  lower_row[i] <- mean(predict_rf$individual[i, ]) - t_crit * sd(predict_rf$individual[i, ])
+  upper_row[i] <- mean(predict_rf$individual[i, ]) + t_crit * sd(predict_rf$individual[i, ])
+#columns
+for(i in 1:length(means)) {
+  lower_col[i] <- means[i] - t_crit * sds[i]
+  upper_col[i] <- means[i] + t_crit * sds[i]
+}  
+
+#store ci in df_copy
+df_copy$lower_row_ci <- lower_row
+df_copy$upper_row_ci <- upper_row
+df_copy2$lower_col_ci <- lower_col
+df_copy2$upper_col_ci <- upper_col
+
+#calculate mean and sd for each column
+means <- colMeans(predict_rf$individual)
+sds <- apply(predict_rf$individual, 2, sd)
+
+
+
+
+
+
+'-----------------------------'
+#visuals and stuff
+df_results <- data.frame(Observed = df_copy$Total_Fish_g_m2, Predicted = predict_rf)
+
+#observed v predicted
+ggplot(df_results, aes(x = Observed, y = Predicted)) +
+  geom_point(color = "red", aes(x = Observed, y = Observed)) +  # Observed values in red
+  geom_point(color = "blue", aes(x = Observed, y = Predicted)) +  # Predicted values in blue
+  geom_abline(intercept = 0, slope = 1, color = "gray", linetype = "dashed") +
+  labs(x = "Observed(red)", y = "Predicted(blue)",
+       title = "Observed vs. Predicted via. Total Fish") +
+  theme_minimal()
+
+print(RMSE(predict_rf, df_test$Total_Fish_g_m2))
+
+
+
+
+'-----------------------------'
+#notes
+
+# need to create ci graph similar to figure 4 - ask for tips
+# recreate graphs from script3
+# will get error when collecting CI - dataframe size between train and test are different -> error of "subscript out of bounds" -> fix: use same dataframe/same size
+    #will mark anywhere that df like this - '''### [explanation]'''
